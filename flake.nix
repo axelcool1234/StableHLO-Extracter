@@ -66,7 +66,6 @@
           pkgs.cudaPackages.nccl
           pkgs.cudaPackages.cutensor
           pkgs.cudaPackages.cusparselt
-          # pkgs.cudaPackages.libcufile
           pkgs.cudaPackages.libcublas
           pkgs.cudaPackages.libcusparse
           pkgs.cudaPackages.libcusolver
@@ -74,11 +73,7 @@
           pkgs.cudaPackages.cuda_cupti
           pkgs.cudaPackages.libcufft
           pkgs.cudaPackages.cuda_nvrtc
-          # pkgs.cudaPackages.cuda_gdb
           pkgs.cudaPackages.cuda_cudart
-          # pkgs.cudaPackages.cudatoolkit
-          # pkgs.cudaPackages.cuda_nvcc
-          # pkgs.cowsay
           pkgs.rdma-core
         ];
         cudaLDLibraryPath = pkgs.lib.makeLibraryPath cudaLibs;
@@ -95,9 +90,6 @@
           # It's using https://pyproject-nix.github.io/pyproject.nix/build.html
           torch = prev.torch.overrideAttrs (old: {
             buildInputs = (old.buildInputs or [ ]) ++ cudaLibs;
-            # postFixup = ''
-            #   addAutoPatchelfSearchPath "${final.nvidia-cufile-cu12}"
-            # '';
           });
           torch-xla = prev.torch-xla.overrideAttrs (old: {
             buildInputs = (old.buildInputs or [ ]) ++ cudaLibs;
