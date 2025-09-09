@@ -1,5 +1,5 @@
 {
-  description = "Hello world flake using uv2nix";
+  description = "StableHLO Extractor";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -137,7 +137,7 @@
         # Enable no optional dependencies for production build.
         packages.default = virtualenv;
 
-        # Make hello runnable with `nix run`
+        # Make extracter runnable with `nix run`
         apps.default = {
           type = "app";
           program = "${virtualenv}/bin/extract";
@@ -151,8 +151,11 @@
           # This devShell simply adds Python and undoes the dependency leakage done by Nixpkgs Python infrastructure.
           impure = pkgs.mkShell {
             packages = [
+              virtualenv
               python
               pkgs.uv
+              pkgs.ruff
+              pkgs.basedpyright
             ];
             env = {
               # Prevent uv from managing Python downloads
@@ -183,7 +186,7 @@
                 # Use environment variable
                 root = "$REPO_ROOT";
                 # Optional: Only enable editable for these packages
-                # members = [ "hello-world" ];
+                # members = [ "stablehlo-extracter" ];
               };
 
               # Override previous set with our overrideable overlay.

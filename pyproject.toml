@@ -16,9 +16,3 @@ extract = "stablehlo_extracter:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[dependency-groups]
-dev = [
-    "ruff>=0.6.7",
-    "basedpyright>=1.31.4",
-]
