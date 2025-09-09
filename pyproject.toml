@@ -1,5 +1,5 @@
 [project]
-name = "hello-world"
+name = "stablehlo-extracter"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.scripts]
-hello = "hello_world:main"
+extract = "stablehlo_extracter:main"
 
 [build-system]
 requires = ["hatchling"]

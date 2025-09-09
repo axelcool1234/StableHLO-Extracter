@@ -129,7 +129,7 @@
                 pyprojectOverrides
               ]
             );
-        virtualenv = pythonSet.mkVirtualEnv "hello-world-env" workspace.deps.default;
+        virtualenv = pythonSet.mkVirtualEnv "stablehlo-extracter-env" workspace.deps.default;
       in
       {
         # Package a virtual environment as our main application.
@@ -140,7 +140,7 @@
         # Make hello runnable with `nix run`
         apps.default = {
           type = "app";
-          program = "${virtualenv}/bin/hello";
+          program = "${virtualenv}/bin/extract";
         };
 
         # This example provides two different modes of development:
@@ -193,7 +193,7 @@
 
                   # Apply fixups for building an editable package of your workspace packages
                   (final: prev: {
-                    hello-world = prev.hello-world.overrideAttrs (old: {
+                    stablehlo-extracter = prev.stablehlo-extracter.overrideAttrs (old: {
                       # It's a good idea to filter the sources going into an editable build
                       # so the editable package doesn't have to be rebuilt on every change.
                       src = lib.fileset.toSource {
@@ -201,7 +201,7 @@
                         fileset = lib.fileset.unions [
                           (old.src + "/pyproject.toml")
                           (old.src + "/README.md")
-                          (old.src + "/src/hello_world/__init__.py")
+                          (old.src + "/src/stablehlo_extracter/__init__.py")
                         ];
                       };
 
