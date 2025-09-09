@@ -1,7 +1,7 @@
 # Torch
 import torch
 
-# import torchvision
+import torchvision
 from torch.export import export as torch_export
 from torch_xla.stablehlo import exported_program_to_stablehlo
 
@@ -16,7 +16,7 @@ from jax._src.lib.mlir import ir
 
 def main():
     # disabled because it requires torchvision
-    # torch_example()
+    torch_example()
     jax_example()
 
 
@@ -51,14 +51,14 @@ def jax_example():
     print(get_stablehlo_asm(stablehlo_add))
 
 
-# def torch_example():
-#     resnet18 = torchvision.models.resnet18(
-#         weights=torchvision.models.ResNet18_Weights.DEFAULT
-#     )
-#     sample_input = (torch.randn(4, 3, 224, 224),)
-#     exported = torch_export(resnet18, sample_input)
-#     stablehlo_program = exported_program_to_stablehlo(exported)
-#     print(stablehlo_program.get_stablehlo_text("forward")[0:4000], "\n...")
+def torch_example():
+    resnet18 = torchvision.models.resnet18(
+        weights=torchvision.models.ResNet18_Weights.DEFAULT
+    )
+    sample_input = (torch.randn(4, 3, 224, 224),)
+    exported = torch_export(resnet18, sample_input)
+    stablehlo_program = exported_program_to_stablehlo(exported)
+    print(stablehlo_program.get_stablehlo_text("forward")[0:4000], "\n...")
 
 
 if __name__ == "__main__":

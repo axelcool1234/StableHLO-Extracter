@@ -97,6 +97,12 @@
               addAutoPatchelfSearchPath "${final.torch}"
             '';
           });
+          torchvision = prev.torchvision.overrideAttrs (old: {
+            buildInputs = (old.buildInputs or [ ]) ++ cudaLibs;
+            postFixup = ''
+              addAutoPatchelfSearchPath "${final.torch}"
+            '';
+          });
           nvidia-cusolver-cu12 = prev.nvidia-cusolver-cu12.overrideAttrs (old: {
             buildInputs = (old.buildInputs or [ ]) ++ cudaLibs;
           });
@@ -132,7 +138,10 @@
         # Make extracter runnable with `nix run`
         apps.default = {
           type = "app";
-          program = "${virtualenv}/bin/extract";
+          program = "${pkgs.writeShellScriptBin "extractWrapper" ''
+            export PJRT_DEVICE=CPU
+            exec ${virtualenv}/bin/extract "$@"
+          ''}/bin/extractWrapper";
         };
 
         # This example provides two different modes of development:
@@ -154,6 +163,8 @@
               UV_PYTHON_DOWNLOADS = "never";
               # Force uv to use nixpkgs Python interpreter
               UV_PYTHON = python.interpreter;
+
+              PJRT_DEVICE = "CPU"; # force torch_xla to use CPU backend
             }
             // lib.optionalAttrs pkgs.stdenv.isLinux {
               # Python libraries often load native shared objects using dlopen(3).
@@ -238,6 +249,8 @@
 
                 # Prevent uv from downloading managed Python's
                 UV_PYTHON_DOWNLOADS = "never";
+
+                PJRT_DEVICE = "CPU"; # force torch_xla to use CPU backend
               };
 
               shellHook = ''
