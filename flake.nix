@@ -225,7 +225,7 @@
               # Build virtual environment, with local packages being editable.
               #
               # Enable all optional dependencies for development.
-              virtualenv = editablePythonSet.mkVirtualEnv "hello-world-dev-env" workspace.deps.all;
+              virtualenv = editablePythonSet.mkVirtualEnv "stablehlo-extracter-dev-env" workspace.deps.all;
 
             in
             pkgs.mkShell {
