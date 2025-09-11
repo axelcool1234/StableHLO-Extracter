@@ -15,7 +15,6 @@ from jax._src.lib.mlir import ir
 
 
 def main():
-    # disabled because it requires torchvision
     torch_example()
     jax_example()
 
