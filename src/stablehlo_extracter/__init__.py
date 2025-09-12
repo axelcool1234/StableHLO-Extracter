@@ -1,3 +1,4 @@
+import sys
 import torch
 import torchvision
 from torch.export import export as torch_export
@@ -297,40 +298,52 @@ models = {
         weights=torchvision.models.optical_flow.Raft_Small_Weights.DEFAULT
     ),
     "quantization.googlenet": torchvision.models.quantization.googlenet(
-        weights=torchvision.models.quantization.GoogLeNet_QuantizedWeights.DEFAULT
+        weights=torchvision.models.quantization.GoogLeNet_QuantizedWeights.DEFAULT,
+        quantize=True,
     ),
     "quantization.inception_v3": torchvision.models.quantization.inception_v3(
-        weights=torchvision.models.quantization.Inception_V3_QuantizedWeights.DEFAULT
+        weights=torchvision.models.quantization.Inception_V3_QuantizedWeights.DEFAULT,
+        quantize=True,
     ),
     "quantization.mobilenet_v2": torchvision.models.quantization.mobilenet_v2(
-        weights=torchvision.models.quantization.MobileNet_V2_QuantizedWeights.DEFAULT
+        weights=torchvision.models.quantization.MobileNet_V2_QuantizedWeights.DEFAULT,
+        quantize=True,
     ),
     "quantization.mobilenet_v3_large": torchvision.models.quantization.mobilenet_v3_large(
-        weights=torchvision.models.quantization.MobileNet_V3_Large_QuantizedWeights.DEFAULT
+        weights=torchvision.models.quantization.MobileNet_V3_Large_QuantizedWeights.DEFAULT,
+        quantize=True,
     ),
     "quantization.resnet18": torchvision.models.quantization.resnet18(
-        weights=torchvision.models.quantization.ResNet18_QuantizedWeights.DEFAULT
+        weights=torchvision.models.quantization.ResNet18_QuantizedWeights.DEFAULT,
+        quantize=True,
     ),
     "quantization.resnet50": torchvision.models.quantization.resnet50(
-        weights=torchvision.models.quantization.ResNet50_QuantizedWeights.DEFAULT
+        weights=torchvision.models.quantization.ResNet50_QuantizedWeights.DEFAULT,
+        quantize=True,
     ),
     "quantization.resnext101_32x8d": torchvision.models.quantization.resnext101_32x8d(
-        weights=torchvision.models.quantization.ResNeXt101_32X8D_QuantizedWeights.DEFAULT
+        weights=torchvision.models.quantization.ResNeXt101_32X8D_QuantizedWeights.DEFAULT,
+        quantize=True,
     ),
     "quantization.resnext101_64x4d": torchvision.models.quantization.resnext101_64x4d(
-        weights=torchvision.models.quantization.ResNeXt101_64X4D_QuantizedWeights.DEFAULT
+        weights=torchvision.models.quantization.ResNeXt101_64X4D_QuantizedWeights.DEFAULT,
+        quantize=True,
     ),
     "quantization.shufflenet_v2_x0_5": torchvision.models.quantization.shufflenet_v2_x0_5(
-        weights=torchvision.models.quantization.ShuffleNet_V2_X0_5_QuantizedWeights.DEFAULT
+        weights=torchvision.models.quantization.ShuffleNet_V2_X0_5_QuantizedWeights.DEFAULT,
+        quantize=True,
     ),
     "quantization.shufflenet_v2_x1_0": torchvision.models.quantization.shufflenet_v2_x1_0(
-        weights=torchvision.models.quantization.ShuffleNet_V2_X1_0_QuantizedWeights.DEFAULT
+        weights=torchvision.models.quantization.ShuffleNet_V2_X1_0_QuantizedWeights.DEFAULT,
+        quantize=True,
     ),
     "quantization.shufflenet_v2_x1_5": torchvision.models.quantization.shufflenet_v2_x1_5(
-        weights=torchvision.models.quantization.ShuffleNet_V2_X1_5_QuantizedWeights.DEFAULT
+        weights=torchvision.models.quantization.ShuffleNet_V2_X1_5_QuantizedWeights.DEFAULT,
+        quantize=True,
     ),
     "quantization.shufflenet_v2_x2_0": torchvision.models.quantization.shufflenet_v2_x2_0(
-        weights=torchvision.models.quantization.ShuffleNet_V2_X2_0_QuantizedWeights.DEFAULT
+        weights=torchvision.models.quantization.ShuffleNet_V2_X2_0_QuantizedWeights.DEFAULT,
+        quantize=True,
     ),
     "segmentation.deeplabv3_mobilenet_v3_large": torchvision.models.segmentation.deeplabv3_mobilenet_v3_large(
         weights=torchvision.models.segmentation.DeepLabV3_MobileNet_V3_Large_Weights.DEFAULT
@@ -348,7 +361,7 @@ models = {
         weights=torchvision.models.segmentation.FCN_ResNet101_Weights.DEFAULT
     ),
     "segmentation.lraspp_mobilenet_v3_large": torchvision.models.segmentation.lraspp_mobilenet_v3_large(
-        weights=torchvision.models.segmentation.FCN_ResNet101_Weights.DEFAULT
+        weights=torchvision.models.segmentation.LRASPP_MobileNet_V3_Large_Weights.DEFAULT
     ),
     "video.mvit_v1_b": torchvision.models.video.mvit_v1_b(
         weights=torchvision.models.video.MViT_V1_B_Weights.DEFAULT
@@ -390,11 +403,13 @@ def extract_and_print_all():
 
 
 def extract_and_print(model_name: str):
+    print(f"extracting {model_name}...", file=sys.stderr, end="")
     model = models[model_name]
     sample_input = (torch.randn(4, 3, 224, 224),)
     exported = torch_export(model, sample_input)
     stablehlo_program = exported_program_to_stablehlo(exported)
     print(stablehlo_program.get_stablehlo_text("forward"))
+    print(f"[ok]", file=sys.stderr)
 
 
 if __name__ == "__main__":
