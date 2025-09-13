@@ -12,7 +12,9 @@ from torch_xla.stablehlo import StableHLOGraphModule, exported_program_to_stable
 from typing_extensions import override
 
 IMAGE_TENSORS: list[tuple[int, int, int, int]] = [
-    (2**batch_exponent, 3, 224, 224) for batch_exponent in range(7)
+    (2**batch_exponent, 3, size, size)
+    for batch_exponent in range(7)
+    for size in [224, 384, 518]
 ]
 VIDEO_TENSORS: list[tuple[int, int, int, int, int]] = [
     (2**batch_exponent, 3, 2**frame_exponent, 112, 112)
@@ -952,7 +954,7 @@ def extract_and_print(
             print(_get_content(stablehlo_program, bytecode))  # pyright: ignore[reportUnknownArgumentType]
     except Exception as e:
         status = f" {end}{RED}[failed]{RESET}\n{YELLOW}{e}{RESET}"
-        raise e
+        print(e, file=sys.stderr)
     finally:
         print(status, file=sys.stderr)
         model.destruct()
