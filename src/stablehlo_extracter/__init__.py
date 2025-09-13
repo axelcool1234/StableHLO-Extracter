@@ -1,415 +1,905 @@
+import argparse
+import os
+import random
 import sys
+from typing import Callable
+
 import torch
 import torchvision
 from torch.export import export as torch_export
-from torch_xla.stablehlo import exported_program_to_stablehlo
+from torch_xla.stablehlo import StableHLOGraphModule, exported_program_to_stablehlo
+
+IMAGE_TENSORS: list[tuple[int, int, int, int]] = [
+    (2**batch_exponent, 3, 224, 224) for batch_exponent in range(7)
+]
+VIDEO_TENSORS: list[tuple[int, int, int, int, int]] = [
+    (2**batch_exponent, 3, 2**frame_exponent, 112, 112)
+    for batch_exponent in range(7)
+    for frame_exponent in range(6)
+]
+RED = "\033[91m"
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+CYAN = "\033[96m"
+BOLD = "\033[1m"
+RESET = "\033[0m"
+
+
+class ModelWrapper:
+    def __init__(
+        self,
+        model_name: str,
+        constructor: Callable[..., torch.nn.Module],
+        default_weight: torchvision.models.WeightsEnum,
+        sizes: list[tuple[int, int, int, int]] | list[tuple[int, int, int, int, int]],
+    ):
+        self.model: None | torch.nn.modules.Module = None
+        self.model_name: str = model_name
+        self.sizes: (
+            list[tuple[int, int, int, int]] | list[tuple[int, int, int, int, int]]
+        ) = sizes
+        self._constructor: Callable[..., torch.nn.Module] = constructor
+        self._default_weight: torchvision.models.WeightsEnum = default_weight
+
+    def construct(self):
+        if "quantization" in self.model_name:
+            self.model = self._constructor(weights=self._default_weight, quantize=True)
+        else:
+            self.model = self._constructor(weights=self._default_weight)
+
+    def destruct(self):
+        if self.model is not None:
+            del self.model
+            self.model = None
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
 
 models = {
     # AlexNet
-    "alexnet": torchvision.models.alexnet(
-        weights=torchvision.models.AlexNet_Weights.DEFAULT
+    ModelWrapper(
+        "alexnet",
+        torchvision.models.alexnet,
+        torchvision.models.AlexNet_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
     # ConvNeXt
-    "convnext_tiny": torchvision.models.convnext_tiny(
-        weights=torchvision.models.ConvNeXt_Tiny_Weights.DEFAULT
+    ModelWrapper(
+        "convnext_tiny",
+        torchvision.models.convnext_tiny,
+        torchvision.models.ConvNeXt_Tiny_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "convnext_small": torchvision.models.convnext_small(
-        weights=torchvision.models.ConvNeXt_Small_Weights.DEFAULT
+    ModelWrapper(
+        "convnext_small",
+        torchvision.models.convnext_small,
+        torchvision.models.ConvNeXt_Small_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "convnext_base": torchvision.models.convnext_base(
-        weights=torchvision.models.ConvNeXt_Base_Weights.DEFAULT
+    ModelWrapper(
+        "convnext_base",
+        torchvision.models.convnext_base,
+        torchvision.models.ConvNeXt_Base_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "convnext_large": torchvision.models.convnext_large(
-        weights=torchvision.models.ConvNeXt_Large_Weights.DEFAULT
+    ModelWrapper(
+        "convnext_large",
+        torchvision.models.convnext_large,
+        torchvision.models.ConvNeXt_Large_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
     # DenseNet
-    "densenet121": torchvision.models.densenet121(
-        weights=torchvision.models.DenseNet121_Weights.DEFAULT
+    ModelWrapper(
+        "densenet121",
+        torchvision.models.densenet121,
+        torchvision.models.DenseNet121_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "densenet161": torchvision.models.densenet161(
-        weights=torchvision.models.DenseNet161_Weights.DEFAULT
+    ModelWrapper(
+        "densenet161",
+        torchvision.models.densenet161,
+        torchvision.models.DenseNet161_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "densenet169": torchvision.models.densenet169(
-        weights=torchvision.models.DenseNet169_Weights.DEFAULT
+    ModelWrapper(
+        "densenet169",
+        torchvision.models.densenet169,
+        torchvision.models.DenseNet169_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "densenet201": torchvision.models.densenet201(
-        weights=torchvision.models.DenseNet201_Weights.DEFAULT
+    ModelWrapper(
+        "densenet201",
+        torchvision.models.densenet201,
+        torchvision.models.DenseNet201_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
     # EfficientNet
-    "efficientnet_b0": torchvision.models.efficientnet_b0(
-        weights=torchvision.models.EfficientNet_B0_Weights.DEFAULT
+    ModelWrapper(
+        "efficientnet_b0",
+        torchvision.models.efficientnet_b0,
+        torchvision.models.EfficientNet_B0_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "efficientnet_b1": torchvision.models.efficientnet_b1(
-        weights=torchvision.models.EfficientNet_B1_Weights.DEFAULT
+    ModelWrapper(
+        "efficientnet_b1",
+        torchvision.models.efficientnet_b1,
+        torchvision.models.EfficientNet_B1_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "efficientnet_b2": torchvision.models.efficientnet_b2(
-        weights=torchvision.models.EfficientNet_B2_Weights.DEFAULT
+    ModelWrapper(
+        "efficientnet_b2",
+        torchvision.models.efficientnet_b2,
+        torchvision.models.EfficientNet_B2_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "efficientnet_b3": torchvision.models.efficientnet_b3(
-        weights=torchvision.models.EfficientNet_B3_Weights.DEFAULT
+    ModelWrapper(
+        "efficientnet_b3",
+        torchvision.models.efficientnet_b3,
+        torchvision.models.EfficientNet_B3_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "efficientnet_b4": torchvision.models.efficientnet_b4(
-        weights=torchvision.models.EfficientNet_B4_Weights.DEFAULT
+    ModelWrapper(
+        "efficientnet_b4",
+        torchvision.models.efficientnet_b4,
+        torchvision.models.EfficientNet_B4_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "efficientnet_b5": torchvision.models.efficientnet_b5(
-        weights=torchvision.models.EfficientNet_B5_Weights.DEFAULT
+    ModelWrapper(
+        "efficientnet_b5",
+        torchvision.models.efficientnet_b5,
+        torchvision.models.EfficientNet_B5_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "efficientnet_b6": torchvision.models.efficientnet_b6(
-        weights=torchvision.models.EfficientNet_B6_Weights.DEFAULT
+    ModelWrapper(
+        "efficientnet_b6",
+        torchvision.models.efficientnet_b6,
+        torchvision.models.EfficientNet_B6_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "efficientnet_b7": torchvision.models.efficientnet_b7(
-        weights=torchvision.models.EfficientNet_B7_Weights.DEFAULT
+    ModelWrapper(
+        "efficientnet_b7",
+        torchvision.models.efficientnet_b7,
+        torchvision.models.EfficientNet_B7_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "efficientnet_v2_s": torchvision.models.efficientnet_v2_s(
-        weights=torchvision.models.EfficientNet_V2_S_Weights.DEFAULT
+    ModelWrapper(
+        "efficientnet_v2_s",
+        torchvision.models.efficientnet_v2_s,
+        torchvision.models.EfficientNet_V2_S_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "efficientnet_v2_m": torchvision.models.efficientnet_v2_m(
-        weights=torchvision.models.EfficientNet_V2_M_Weights.DEFAULT
+    ModelWrapper(
+        "efficientnet_v2_m",
+        torchvision.models.efficientnet_v2_m,
+        torchvision.models.EfficientNet_V2_M_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "efficientnet_v2_l": torchvision.models.efficientnet_v2_l(
-        weights=torchvision.models.EfficientNet_V2_L_Weights.DEFAULT
+    ModelWrapper(
+        "efficientnet_v2_l",
+        torchvision.models.efficientnet_v2_l,
+        torchvision.models.EfficientNet_V2_L_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
     # GoogLeNet
-    "googlenet": torchvision.models.googlenet(
-        weights=torchvision.models.GoogLeNet_Weights.DEFAULT
+    ModelWrapper(
+        "googlenet",
+        torchvision.models.googlenet,
+        torchvision.models.GoogLeNet_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
     # Inception
-    "inception_v3": torchvision.models.inception_v3(
-        weights=torchvision.models.Inception_V3_Weights.DEFAULT
+    ModelWrapper(
+        "inception_v3",
+        torchvision.models.inception_v3,
+        torchvision.models.Inception_V3_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
     # MNASNet
-    "mnasnet0_5": torchvision.models.mnasnet0_5(
-        weights=torchvision.models.MNASNet0_5_Weights.DEFAULT
+    ModelWrapper(
+        "mnasnet0_5",
+        torchvision.models.mnasnet0_5,
+        torchvision.models.MNASNet0_5_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "mnasnet0_75": torchvision.models.mnasnet0_75(
-        weights=torchvision.models.MNASNet0_75_Weights.DEFAULT
+    ModelWrapper(
+        "mnasnet0_75",
+        torchvision.models.mnasnet0_75,
+        torchvision.models.MNASNet0_75_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "mnasnet1_0": torchvision.models.mnasnet1_0(
-        weights=torchvision.models.MNASNet1_0_Weights.DEFAULT
+    ModelWrapper(
+        "mnasnet1_0",
+        torchvision.models.mnasnet1_0,
+        torchvision.models.MNASNet1_0_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "mnasnet1_3": torchvision.models.mnasnet1_3(
-        weights=torchvision.models.MNASNet1_3_Weights.DEFAULT
+    ModelWrapper(
+        "mnasnet1_3",
+        torchvision.models.mnasnet1_3,
+        torchvision.models.MNASNet1_3_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
     # MobileNetV2
-    "mobilenet_v2": torchvision.models.mobilenet_v2(
-        weights=torchvision.models.MobileNet_V2_Weights.DEFAULT
+    ModelWrapper(
+        "mobilenet_v2",
+        torchvision.models.mobilenet_v2,
+        torchvision.models.MobileNet_V2_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
     # MobileNetV3
-    "mobilenet_v3_large": torchvision.models.mobilenet_v3_large(
-        weights=torchvision.models.MobileNet_V3_Large_Weights.DEFAULT
+    ModelWrapper(
+        "mobilenet_v3_large",
+        torchvision.models.mobilenet_v3_large,
+        torchvision.models.MobileNet_V3_Large_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "mobilenet_v3_small": torchvision.models.mobilenet_v3_small(
-        weights=torchvision.models.MobileNet_V3_Small_Weights.DEFAULT
+    ModelWrapper(
+        "mobilenet_v3_small",
+        torchvision.models.mobilenet_v3_small,
+        torchvision.models.MobileNet_V3_Small_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
     # RegNet
-    "regnet_y_400mf": torchvision.models.regnet_y_400mf(
-        weights=torchvision.models.RegNet_Y_400MF_Weights.DEFAULT
+    ModelWrapper(
+        "regnet_y_400mf",
+        torchvision.models.regnet_y_400mf,
+        torchvision.models.RegNet_Y_400MF_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "regnet_y_800mf": torchvision.models.regnet_y_800mf(
-        weights=torchvision.models.RegNet_Y_800MF_Weights.DEFAULT
+    ModelWrapper(
+        "regnet_y_800mf",
+        torchvision.models.regnet_y_800mf,
+        torchvision.models.RegNet_Y_800MF_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "regnet_y_1_6gf": torchvision.models.regnet_y_1_6gf(
-        weights=torchvision.models.RegNet_Y_1_6GF_Weights.DEFAULT
+    ModelWrapper(
+        "regnet_y_1_6gf",
+        torchvision.models.regnet_y_1_6gf,
+        torchvision.models.RegNet_Y_1_6GF_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "regnet_y_3_2gf": torchvision.models.regnet_y_3_2gf(
-        weights=torchvision.models.RegNet_Y_3_2GF_Weights.DEFAULT
+    ModelWrapper(
+        "regnet_y_3_2gf",
+        torchvision.models.regnet_y_3_2gf,
+        torchvision.models.RegNet_Y_3_2GF_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "regnet_y_8gf": torchvision.models.regnet_y_8gf(
-        weights=torchvision.models.RegNet_Y_8GF_Weights.DEFAULT
+    ModelWrapper(
+        "regnet_y_8gf",
+        torchvision.models.regnet_y_8gf,
+        torchvision.models.RegNet_Y_8GF_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "regnet_y_16gf": torchvision.models.regnet_y_16gf(
-        weights=torchvision.models.RegNet_Y_16GF_Weights.DEFAULT
+    ModelWrapper(
+        "regnet_y_16gf",
+        torchvision.models.regnet_y_16gf,
+        torchvision.models.RegNet_Y_16GF_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "regnet_y_32gf": torchvision.models.regnet_y_32gf(
-        weights=torchvision.models.RegNet_Y_32GF_Weights.DEFAULT
+    ModelWrapper(
+        "regnet_y_32gf",
+        torchvision.models.regnet_y_32gf,
+        torchvision.models.RegNet_Y_32GF_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "regnet_y_128gf": torchvision.models.regnet_y_128gf(
-        weights=torchvision.models.RegNet_Y_128GF_Weights.DEFAULT
+    ModelWrapper(
+        "regnet_y_128gf",
+        torchvision.models.regnet_y_128gf,
+        torchvision.models.RegNet_Y_128GF_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "regnet_x_400mf": torchvision.models.regnet_x_400mf(
-        weights=torchvision.models.RegNet_X_400MF_Weights.DEFAULT
+    ModelWrapper(
+        "regnet_x_400mf",
+        torchvision.models.regnet_x_400mf,
+        torchvision.models.RegNet_X_400MF_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "regnet_x_800mf": torchvision.models.regnet_x_800mf(
-        weights=torchvision.models.RegNet_X_800MF_Weights.DEFAULT
+    ModelWrapper(
+        "regnet_x_800mf",
+        torchvision.models.regnet_x_800mf,
+        torchvision.models.RegNet_X_800MF_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "regnet_x_1_6gf": torchvision.models.regnet_x_1_6gf(
-        weights=torchvision.models.RegNet_X_1_6GF_Weights.DEFAULT
+    ModelWrapper(
+        "regnet_x_1_6gf",
+        torchvision.models.regnet_x_1_6gf,
+        torchvision.models.RegNet_X_1_6GF_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "regnet_x_3_2gf": torchvision.models.regnet_x_3_2gf(
-        weights=torchvision.models.RegNet_X_3_2GF_Weights.DEFAULT
+    ModelWrapper(
+        "regnet_x_3_2gf",
+        torchvision.models.regnet_x_3_2gf,
+        torchvision.models.RegNet_X_3_2GF_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "regnet_x_8gf": torchvision.models.regnet_x_8gf(
-        weights=torchvision.models.RegNet_X_8GF_Weights.DEFAULT
+    ModelWrapper(
+        "regnet_x_8gf",
+        torchvision.models.regnet_x_8gf,
+        torchvision.models.RegNet_X_8GF_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "regnet_x_16gf": torchvision.models.regnet_x_16gf(
-        weights=torchvision.models.RegNet_X_16GF_Weights.DEFAULT
+    ModelWrapper(
+        "regnet_x_16gf",
+        torchvision.models.regnet_x_16gf,
+        torchvision.models.RegNet_X_16GF_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "regnet_x_32gf": torchvision.models.regnet_x_32gf(
-        weights=torchvision.models.RegNet_X_32GF_Weights.DEFAULT
+    ModelWrapper(
+        "regnet_x_32gf",
+        torchvision.models.regnet_x_32gf,
+        torchvision.models.RegNet_X_32GF_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
     # ResNet
-    "resnet18": torchvision.models.resnet18(
-        weights=torchvision.models.ResNet18_Weights.DEFAULT
+    ModelWrapper(
+        "resnet18",
+        torchvision.models.resnet18,
+        torchvision.models.ResNet18_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "resnet34": torchvision.models.resnet34(
-        weights=torchvision.models.ResNet34_Weights.DEFAULT
+    ModelWrapper(
+        "resnet34",
+        torchvision.models.resnet34,
+        torchvision.models.ResNet34_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "resnet50": torchvision.models.resnet50(
-        weights=torchvision.models.ResNet50_Weights.DEFAULT
+    ModelWrapper(
+        "resnet50",
+        torchvision.models.resnet50,
+        torchvision.models.ResNet50_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "resnet101": torchvision.models.resnet101(
-        weights=torchvision.models.ResNet101_Weights.DEFAULT
+    ModelWrapper(
+        "resnet101",
+        torchvision.models.resnet101,
+        torchvision.models.ResNet101_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "resnet152": torchvision.models.resnet152(
-        weights=torchvision.models.ResNet152_Weights.DEFAULT
+    ModelWrapper(
+        "resnet152",
+        torchvision.models.resnet152,
+        torchvision.models.ResNet152_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "resnext50_32x4d": torchvision.models.resnext50_32x4d(
-        weights=torchvision.models.ResNeXt50_32X4D_Weights.DEFAULT
+    ModelWrapper(
+        "resnext50_32x4d",
+        torchvision.models.resnext50_32x4d,
+        torchvision.models.ResNeXt50_32X4D_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "resnext101_32x8d": torchvision.models.resnext101_32x8d(
-        weights=torchvision.models.ResNeXt101_32X8D_Weights.DEFAULT
+    ModelWrapper(
+        "resnext101_32x8d",
+        torchvision.models.resnext101_32x8d,
+        torchvision.models.ResNeXt101_32X8D_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "resnext101_64x4d": torchvision.models.resnext101_64x4d(
-        weights=torchvision.models.ResNeXt101_64X4D_Weights.DEFAULT
+    ModelWrapper(
+        "resnext101_64x4d",
+        torchvision.models.resnext101_64x4d,
+        torchvision.models.ResNeXt101_64X4D_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "wide_resnet50_2": torchvision.models.wide_resnet50_2(
-        weights=torchvision.models.Wide_ResNet50_2_Weights.DEFAULT
+    ModelWrapper(
+        "wide_resnet50_2",
+        torchvision.models.wide_resnet50_2,
+        torchvision.models.Wide_ResNet50_2_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "wide_resnet101_2": torchvision.models.wide_resnet101_2(
-        weights=torchvision.models.Wide_ResNet101_2_Weights.DEFAULT
+    ModelWrapper(
+        "wide_resnet101_2",
+        torchvision.models.wide_resnet101_2,
+        torchvision.models.Wide_ResNet101_2_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
     # ShuffleNet
-    "shufflenet_v2_x0_5": torchvision.models.shufflenet_v2_x0_5(
-        weights=torchvision.models.ShuffleNet_V2_X0_5_Weights.DEFAULT
+    ModelWrapper(
+        "shufflenet_v2_x0_5",
+        torchvision.models.shufflenet_v2_x0_5,
+        torchvision.models.ShuffleNet_V2_X0_5_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "shufflenet_v2_x1_0": torchvision.models.shufflenet_v2_x1_0(
-        weights=torchvision.models.ShuffleNet_V2_X1_0_Weights.DEFAULT
+    ModelWrapper(
+        "shufflenet_v2_x1_0",
+        torchvision.models.shufflenet_v2_x1_0,
+        torchvision.models.ShuffleNet_V2_X1_0_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "shufflenet_v2_x1_5": torchvision.models.shufflenet_v2_x1_5(
-        weights=torchvision.models.ShuffleNet_V2_X1_5_Weights.DEFAULT
+    ModelWrapper(
+        "shufflenet_v2_x1_5",
+        torchvision.models.shufflenet_v2_x1_5,
+        torchvision.models.ShuffleNet_V2_X1_5_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "shufflenet_v2_x2_0": torchvision.models.shufflenet_v2_x2_0(
-        weights=torchvision.models.ShuffleNet_V2_X2_0_Weights.DEFAULT
+    ModelWrapper(
+        "shufflenet_v2_x2_0",
+        torchvision.models.shufflenet_v2_x2_0,
+        torchvision.models.ShuffleNet_V2_X2_0_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
     # SqueezeNet
-    "squeezenet1_0": torchvision.models.squeezenet1_0(
-        weights=torchvision.models.SqueezeNet1_0_Weights.DEFAULT
+    ModelWrapper(
+        "squeezenet1_0",
+        torchvision.models.squeezenet1_0,
+        torchvision.models.SqueezeNet1_0_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "squeezenet1_1": torchvision.models.squeezenet1_1(
-        weights=torchvision.models.SqueezeNet1_1_Weights.DEFAULT
+    ModelWrapper(
+        "squeezenet1_1",
+        torchvision.models.squeezenet1_1,
+        torchvision.models.SqueezeNet1_1_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
     # VGG
-    "vgg11": torchvision.models.vgg11(weights=torchvision.models.VGG11_Weights.DEFAULT),
-    "vgg11_bn": torchvision.models.vgg11_bn(
-        weights=torchvision.models.VGG11_BN_Weights.DEFAULT
+    ModelWrapper(
+        "vgg11",
+        torchvision.models.vgg11,
+        torchvision.models.VGG11_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "vgg13": torchvision.models.vgg13(weights=torchvision.models.VGG13_Weights.DEFAULT),
-    "vgg13_bn": torchvision.models.vgg13_bn(
-        weights=torchvision.models.VGG13_BN_Weights.DEFAULT
+    ModelWrapper(
+        "vgg11_bn",
+        torchvision.models.vgg11_bn,
+        torchvision.models.VGG11_BN_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "vgg16": torchvision.models.vgg16(weights=torchvision.models.VGG16_Weights.DEFAULT),
-    "vgg16_bn": torchvision.models.vgg16_bn(
-        weights=torchvision.models.VGG16_BN_Weights.DEFAULT
+    ModelWrapper(
+        "vgg13",
+        torchvision.models.vgg13,
+        torchvision.models.VGG13_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "vgg19": torchvision.models.vgg19(weights=torchvision.models.VGG19_Weights.DEFAULT),
-    "vgg19_bn": torchvision.models.vgg19_bn(
-        weights=torchvision.models.VGG19_BN_Weights.DEFAULT
+    ModelWrapper(
+        "vgg13_bn",
+        torchvision.models.vgg13_bn,
+        torchvision.models.VGG13_BN_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
+    ),
+    ModelWrapper(
+        "vgg16",
+        torchvision.models.vgg16,
+        torchvision.models.VGG16_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
+    ),
+    ModelWrapper(
+        "vgg16_bn",
+        torchvision.models.vgg16_bn,
+        torchvision.models.VGG16_BN_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
+    ),
+    ModelWrapper(
+        "vgg19",
+        torchvision.models.vgg19,
+        torchvision.models.VGG19_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
+    ),
+    ModelWrapper(
+        "vgg19_bn",
+        torchvision.models.vgg19_bn,
+        torchvision.models.VGG19_BN_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
     # VisionTransformer
-    "vit_b_16": torchvision.models.vit_b_16(
-        weights=torchvision.models.ViT_B_16_Weights.DEFAULT
+    ModelWrapper(
+        "vit_b_16",
+        torchvision.models.vit_b_16,
+        torchvision.models.ViT_B_16_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "vit_b_32": torchvision.models.vit_b_32(
-        weights=torchvision.models.ViT_B_32_Weights.DEFAULT
+    ModelWrapper(
+        "vit_b_32",
+        torchvision.models.vit_b_32,
+        torchvision.models.ViT_B_32_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "vit_l_16": torchvision.models.vit_l_16(
-        weights=torchvision.models.ViT_L_16_Weights.DEFAULT
+    ModelWrapper(
+        "vit_l_16",
+        torchvision.models.vit_l_16,
+        torchvision.models.ViT_L_16_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "vit_l_32": torchvision.models.vit_l_32(
-        weights=torchvision.models.ViT_L_32_Weights.DEFAULT
+    ModelWrapper(
+        "vit_l_32",
+        torchvision.models.vit_l_32,
+        torchvision.models.ViT_L_32_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "vit_h_14": torchvision.models.vit_h_14(
-        weights=torchvision.models.ViT_H_14_Weights.DEFAULT
+    ModelWrapper(
+        "vit_h_14",
+        torchvision.models.vit_h_14,
+        torchvision.models.ViT_H_14_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
     # Swin Transformers
-    "swin_t": torchvision.models.swin_t(
-        weights=torchvision.models.Swin_T_Weights.DEFAULT
+    ModelWrapper(
+        "swin_t",
+        torchvision.models.swin_t,
+        torchvision.models.Swin_T_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "swin_s": torchvision.models.swin_s(
-        weights=torchvision.models.Swin_S_Weights.DEFAULT
+    ModelWrapper(
+        "swin_s",
+        torchvision.models.swin_s,
+        torchvision.models.Swin_S_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "swin_b": torchvision.models.swin_b(
-        weights=torchvision.models.Swin_B_Weights.DEFAULT
+    ModelWrapper(
+        "swin_b",
+        torchvision.models.swin_b,
+        torchvision.models.Swin_B_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "swin_v2_t": torchvision.models.swin_v2_t(
-        weights=torchvision.models.Swin_V2_T_Weights.DEFAULT
+    ModelWrapper(
+        "swin_v2_t",
+        torchvision.models.swin_v2_t,
+        torchvision.models.Swin_V2_T_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "swin_v2_s": torchvision.models.swin_v2_s(
-        weights=torchvision.models.Swin_V2_S_Weights.DEFAULT
+    ModelWrapper(
+        "swin_v2_s",
+        torchvision.models.swin_v2_s,
+        torchvision.models.Swin_V2_S_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "swin_v2_b": torchvision.models.swin_v2_b(
-        weights=torchvision.models.Swin_V2_B_Weights.DEFAULT
+    ModelWrapper(
+        "swin_v2_b",
+        torchvision.models.swin_v2_b,
+        torchvision.models.Swin_V2_B_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
     # MaxVit
-    "maxvit_t": torchvision.models.maxvit_t(
-        weights=torchvision.models.MaxVit_T_Weights.DEFAULT
+    ModelWrapper(
+        "maxvit_t",
+        torchvision.models.maxvit_t,
+        torchvision.models.MaxVit_T_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
     # TODO: Label these
-    "detection.fasterrcnn_resnet50_fpn": torchvision.models.detection.fasterrcnn_resnet50_fpn(
-        weights=torchvision.models.detection.FasterRCNN_ResNet50_FPN_Weights.DEFAULT
+    # NOTE: Detection models mutate module attributes during forward/export. Skipping...
+    # ModelWrapper(
+    #     "detection.fasterrcnn_resnet50_fpn",
+    #     torchvision.models.detection.fasterrcnn_resnet50_fpn,
+    #     torchvision.models.detection.FasterRCNN_ResNet50_FPN_Weights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "detection.fasterrcnn_resnet50_fpn_v2",
+    #     torchvision.models.detection.fasterrcnn_resnet50_fpn_v2,
+    #     torchvision.models.detection.FasterRCNN_ResNet50_FPN_V2_Weights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "detection.fasterrcnn_mobilenet_v3_large_fpn",
+    #     torchvision.models.detection.fasterrcnn_mobilenet_v3_large_fpn,
+    #     torchvision.models.detection.FasterRCNN_MobileNet_V3_Large_FPN_Weights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "detection.fasterrcnn_mobilenet_v3_large_320_fpn",
+    #     torchvision.models.detection.fasterrcnn_mobilenet_v3_large_320_fpn,
+    #     torchvision.models.detection.FasterRCNN_MobileNet_V3_Large_320_FPN_Weights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "detection.fcos_resnet50_fpn",
+    #     torchvision.models.detection.fcos_resnet50_fpn,
+    #     torchvision.models.detection.FCOS_ResNet50_FPN_Weights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "detection.keypointrcnn_resnet50_fpn",
+    #     torchvision.models.detection.keypointrcnn_resnet50_fpn,
+    #     torchvision.models.detection.KeypointRCNN_ResNet50_FPN_Weights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "detection.maskrcnn_resnet50_fpn",
+    #     torchvision.models.detection.maskrcnn_resnet50_fpn,
+    #     torchvision.models.detection.MaskRCNN_ResNet50_FPN_Weights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "detection.maskrcnn_resnet50_fpn_v2",
+    #     torchvision.models.detection.maskrcnn_resnet50_fpn_v2,
+    #     torchvision.models.detection.MaskRCNN_ResNet50_FPN_V2_Weights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "detection.retinanet_resnet50_fpn",
+    #     torchvision.models.detection.retinanet_resnet50_fpn,
+    #     torchvision.models.detection.RetinaNet_ResNet50_FPN_Weights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "detection.retinanet_resnet50_fpn_v2",
+    #     torchvision.models.detection.retinanet_resnet50_fpn_v2,
+    #     torchvision.models.detection.RetinaNet_ResNet50_FPN_V2_Weights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "detection.ssd300_vgg16",
+    #     torchvision.models.detection.ssd300_vgg16,
+    #     torchvision.models.detection.SSD300_VGG16_Weights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "detection.ssdlite320_mobilenet_v3_large",
+    #     torchvision.models.detection.ssdlite320_mobilenet_v3_large,
+    #     torchvision.models.detection.SSDLite320_MobileNet_V3_Large_Weights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    ModelWrapper(
+        "optical_flow.raft_large",
+        torchvision.models.optical_flow.raft_large,
+        torchvision.models.optical_flow.Raft_Large_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "detection.fasterrcnn_resnet50_fpn_v2": torchvision.models.detection.fasterrcnn_resnet50_fpn_v2(
-        weights=torchvision.models.detection.FasterRCNN_ResNet50_FPN_V2_Weights.DEFAULT
+    ModelWrapper(
+        "optical_flow.raft_small",
+        torchvision.models.optical_flow.raft_small,
+        torchvision.models.optical_flow.Raft_Small_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "detection.fasterrcnn_mobilenet_v3_large_fpn": torchvision.models.detection.fasterrcnn_mobilenet_v3_large_fpn(
-        weights=torchvision.models.detection.FasterRCNN_MobileNet_V3_Large_FPN_Weights.DEFAULT
+    # NOTE: Quantization isn't supported by torch-xla export
+    # ModelWrapper(
+    #     "quantization.googlenet",
+    #     torchvision.models.quantization.googlenet,
+    #     torchvision.models.quantization.GoogLeNet_QuantizedWeights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "quantization.inception_v3",
+    #     torchvision.models.quantization.inception_v3,
+    #     torchvision.models.quantization.Inception_V3_QuantizedWeights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "quantization.mobilenet_v2",
+    #     torchvision.models.quantization.mobilenet_v2,
+    #     torchvision.models.quantization.MobileNet_V2_QuantizedWeights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "quantization.mobilenet_v3_large",
+    #     torchvision.models.quantization.mobilenet_v3_large,
+    #     torchvision.models.quantization.MobileNet_V3_Large_QuantizedWeights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "quantization.resnet18",
+    #     torchvision.models.quantization.resnet18,
+    #     torchvision.models.quantization.ResNet18_QuantizedWeights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "quantization.resnet50",
+    #     torchvision.models.quantization.resnet50,
+    #     torchvision.models.quantization.ResNet50_QuantizedWeights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "quantization.resnext101_32x8d",
+    #     torchvision.models.quantization.resnext101_32x8d,
+    #     torchvision.models.quantization.ResNeXt101_32X8D_QuantizedWeights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "quantization.resnext101_64x4d",
+    #     torchvision.models.quantization.resnext101_64x4d,
+    #     torchvision.models.quantization.ResNeXt101_64X4D_QuantizedWeights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "quantization.shufflenet_v2_x0_5",
+    #     torchvision.models.quantization.shufflenet_v2_x0_5,
+    #     torchvision.models.quantization.ShuffleNet_V2_X0_5_QuantizedWeights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "quantization.shufflenet_v2_x1_0",
+    #     torchvision.models.quantization.shufflenet_v2_x1_0,
+    #     torchvision.models.quantization.ShuffleNet_V2_X1_0_QuantizedWeights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "quantization.shufflenet_v2_x1_5",
+    #     torchvision.models.quantization.shufflenet_v2_x1_5,
+    #     torchvision.models.quantization.ShuffleNet_V2_X1_5_QuantizedWeights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "quantization.shufflenet_v2_x2_0",
+    #     torchvision.models.quantization.shufflenet_v2_x2_0,
+    #     torchvision.models.quantization.ShuffleNet_V2_X2_0_QuantizedWeights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    ModelWrapper(
+        "segmentation.deeplabv3_mobilenet_v3_large",
+        torchvision.models.segmentation.deeplabv3_mobilenet_v3_large,
+        torchvision.models.segmentation.DeepLabV3_MobileNet_V3_Large_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "detection.fasterrcnn_mobilenet_v3_large_320_fpn": torchvision.models.detection.fasterrcnn_mobilenet_v3_large_320_fpn(
-        weights=torchvision.models.detection.FasterRCNN_MobileNet_V3_Large_320_FPN_Weights.DEFAULT
+    ModelWrapper(
+        "segmentation.deeplabv3_resnet50",
+        torchvision.models.segmentation.deeplabv3_resnet50,
+        torchvision.models.segmentation.DeepLabV3_ResNet50_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "detection.fcos_resnet50_fpn": torchvision.models.detection.fcos_resnet50_fpn(
-        weights=torchvision.models.detection.FCOS_ResNet50_FPN_Weights.DEFAULT
+    ModelWrapper(
+        "segmentation.deeplabv3_resnet101",
+        torchvision.models.segmentation.deeplabv3_resnet101,
+        torchvision.models.segmentation.DeepLabV3_ResNet101_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "detection.keypointrcnn_resnet50_fpn": torchvision.models.detection.keypointrcnn_resnet50_fpn(
-        weights=torchvision.models.detection.KeypointRCNN_ResNet50_FPN_Weights.DEFAULT
+    ModelWrapper(
+        "segmentation.fcn_resnet50",
+        torchvision.models.segmentation.fcn_resnet50,
+        torchvision.models.segmentation.FCN_ResNet50_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "detection.maskrcnn_resnet50_fpn": torchvision.models.detection.maskrcnn_resnet50_fpn(
-        weights=torchvision.models.detection.MaskRCNN_ResNet50_FPN_Weights.DEFAULT
+    ModelWrapper(
+        "segmentation.fcn_resnet101",
+        torchvision.models.segmentation.fcn_resnet101,
+        torchvision.models.segmentation.FCN_ResNet101_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "detection.maskrcnn_resnet50_fpn_v2": torchvision.models.detection.maskrcnn_resnet50_fpn_v2(
-        weights=torchvision.models.detection.MaskRCNN_ResNet50_FPN_V2_Weights.DEFAULT
+    ModelWrapper(
+        "segmentation.lraspp_mobilenet_v3_large",
+        torchvision.models.segmentation.lraspp_mobilenet_v3_large,
+        torchvision.models.segmentation.LRASPP_MobileNet_V3_Large_Weights.DEFAULT,
+        sizes=IMAGE_TENSORS,
     ),
-    "detection.retinanet_resnet50_fpn": torchvision.models.detection.retinanet_resnet50_fpn(
-        weights=torchvision.models.detection.RetinaNet_ResNet50_FPN_Weights.DEFAULT
+    ModelWrapper(
+        "video.mvit_v1_b",
+        torchvision.models.video.mvit_v1_b,
+        torchvision.models.video.MViT_V1_B_Weights.DEFAULT,
+        sizes=VIDEO_TENSORS,
     ),
-    "detection.retinanet_resnet50_fpn_v2": torchvision.models.detection.retinanet_resnet50_fpn_v2(
-        weights=torchvision.models.detection.RetinaNet_ResNet50_FPN_V2_Weights.DEFAULT
+    ModelWrapper(
+        "video.mvit_v2_s",
+        torchvision.models.video.mvit_v2_s,
+        torchvision.models.video.MViT_V2_S_Weights.DEFAULT,
+        sizes=VIDEO_TENSORS,
     ),
-    "detection.ssd300_vgg16": torchvision.models.detection.ssd300_vgg16(
-        weights=torchvision.models.detection.SSD300_VGG16_Weights.DEFAULT
+    ModelWrapper(
+        "video.r3d_18",
+        torchvision.models.video.r3d_18,
+        torchvision.models.video.R3D_18_Weights.DEFAULT,
+        sizes=VIDEO_TENSORS,
     ),
-    "detection.ssdlite320_mobilenet_v3_large": torchvision.models.detection.ssdlite320_mobilenet_v3_large(
-        weights=torchvision.models.detection.SSDLite320_MobileNet_V3_Large_Weights.DEFAULT
+    ModelWrapper(
+        "video.mc3_18",
+        torchvision.models.video.mc3_18,
+        torchvision.models.video.MC3_18_Weights.DEFAULT,
+        sizes=VIDEO_TENSORS,
     ),
-    "optical_flow.raft_large": torchvision.models.optical_flow.raft_large(
-        weights=torchvision.models.optical_flow.Raft_Large_Weights.DEFAULT
+    ModelWrapper(
+        "video.r2plus1d_18",
+        torchvision.models.video.r2plus1d_18,
+        torchvision.models.video.R2Plus1D_18_Weights.DEFAULT,
+        sizes=VIDEO_TENSORS,
     ),
-    "optical_flow.raft_small": torchvision.models.optical_flow.raft_small(
-        weights=torchvision.models.optical_flow.Raft_Small_Weights.DEFAULT
+    ModelWrapper(
+        "video.s3d",
+        torchvision.models.video.s3d,
+        torchvision.models.video.S3D_Weights.DEFAULT,
+        sizes=VIDEO_TENSORS,
     ),
-    "quantization.googlenet": torchvision.models.quantization.googlenet(
-        weights=torchvision.models.quantization.GoogLeNet_QuantizedWeights.DEFAULT,
-        quantize=True,
+    ModelWrapper(
+        "video.swin3d_t",
+        torchvision.models.video.swin3d_t,
+        torchvision.models.video.Swin3D_T_Weights.DEFAULT,
+        sizes=VIDEO_TENSORS,
     ),
-    "quantization.inception_v3": torchvision.models.quantization.inception_v3(
-        weights=torchvision.models.quantization.Inception_V3_QuantizedWeights.DEFAULT,
-        quantize=True,
+    ModelWrapper(
+        "video.swin3d_s",
+        torchvision.models.video.swin3d_s,
+        torchvision.models.video.Swin3D_S_Weights.DEFAULT,
+        sizes=VIDEO_TENSORS,
     ),
-    "quantization.mobilenet_v2": torchvision.models.quantization.mobilenet_v2(
-        weights=torchvision.models.quantization.MobileNet_V2_QuantizedWeights.DEFAULT,
-        quantize=True,
-    ),
-    "quantization.mobilenet_v3_large": torchvision.models.quantization.mobilenet_v3_large(
-        weights=torchvision.models.quantization.MobileNet_V3_Large_QuantizedWeights.DEFAULT,
-        quantize=True,
-    ),
-    "quantization.resnet18": torchvision.models.quantization.resnet18(
-        weights=torchvision.models.quantization.ResNet18_QuantizedWeights.DEFAULT,
-        quantize=True,
-    ),
-    "quantization.resnet50": torchvision.models.quantization.resnet50(
-        weights=torchvision.models.quantization.ResNet50_QuantizedWeights.DEFAULT,
-        quantize=True,
-    ),
-    "quantization.resnext101_32x8d": torchvision.models.quantization.resnext101_32x8d(
-        weights=torchvision.models.quantization.ResNeXt101_32X8D_QuantizedWeights.DEFAULT,
-        quantize=True,
-    ),
-    "quantization.resnext101_64x4d": torchvision.models.quantization.resnext101_64x4d(
-        weights=torchvision.models.quantization.ResNeXt101_64X4D_QuantizedWeights.DEFAULT,
-        quantize=True,
-    ),
-    "quantization.shufflenet_v2_x0_5": torchvision.models.quantization.shufflenet_v2_x0_5(
-        weights=torchvision.models.quantization.ShuffleNet_V2_X0_5_QuantizedWeights.DEFAULT,
-        quantize=True,
-    ),
-    "quantization.shufflenet_v2_x1_0": torchvision.models.quantization.shufflenet_v2_x1_0(
-        weights=torchvision.models.quantization.ShuffleNet_V2_X1_0_QuantizedWeights.DEFAULT,
-        quantize=True,
-    ),
-    "quantization.shufflenet_v2_x1_5": torchvision.models.quantization.shufflenet_v2_x1_5(
-        weights=torchvision.models.quantization.ShuffleNet_V2_X1_5_QuantizedWeights.DEFAULT,
-        quantize=True,
-    ),
-    "quantization.shufflenet_v2_x2_0": torchvision.models.quantization.shufflenet_v2_x2_0(
-        weights=torchvision.models.quantization.ShuffleNet_V2_X2_0_QuantizedWeights.DEFAULT,
-        quantize=True,
-    ),
-    "segmentation.deeplabv3_mobilenet_v3_large": torchvision.models.segmentation.deeplabv3_mobilenet_v3_large(
-        weights=torchvision.models.segmentation.DeepLabV3_MobileNet_V3_Large_Weights.DEFAULT
-    ),
-    "segmentation.deeplabv3_resnet50": torchvision.models.segmentation.deeplabv3_resnet50(
-        weights=torchvision.models.segmentation.DeepLabV3_ResNet50_Weights.DEFAULT
-    ),
-    "segmentation.deeplabv3_resnet101": torchvision.models.segmentation.deeplabv3_resnet101(
-        weights=torchvision.models.segmentation.DeepLabV3_ResNet101_Weights.DEFAULT
-    ),
-    "segmentation.fcn_resnet50": torchvision.models.segmentation.fcn_resnet50(
-        weights=torchvision.models.segmentation.FCN_ResNet50_Weights.DEFAULT
-    ),
-    "segmentation.fcn_resnet101": torchvision.models.segmentation.fcn_resnet101(
-        weights=torchvision.models.segmentation.FCN_ResNet101_Weights.DEFAULT
-    ),
-    "segmentation.lraspp_mobilenet_v3_large": torchvision.models.segmentation.lraspp_mobilenet_v3_large(
-        weights=torchvision.models.segmentation.LRASPP_MobileNet_V3_Large_Weights.DEFAULT
-    ),
-    "video.mvit_v1_b": torchvision.models.video.mvit_v1_b(
-        weights=torchvision.models.video.MViT_V1_B_Weights.DEFAULT
-    ),
-    "video.mvit_v2_s": torchvision.models.video.mvit_v2_s(
-        weights=torchvision.models.video.MViT_V2_S_Weights.DEFAULT
-    ),
-    "video.r3d_18": torchvision.models.video.r3d_18(
-        weights=torchvision.models.video.R3D_18_Weights.DEFAULT
-    ),
-    "video.mc3_18": torchvision.models.video.mc3_18(
-        weights=torchvision.models.video.MC3_18_Weights.DEFAULT
-    ),
-    "video.r2plus1d_18": torchvision.models.video.r2plus1d_18(
-        weights=torchvision.models.video.R2Plus1D_18_Weights.DEFAULT
-    ),
-    "video.s3d": torchvision.models.video.s3d(
-        weights=torchvision.models.video.S3D_Weights.DEFAULT
-    ),
-    "video.swin3d_t": torchvision.models.video.swin3d_t(
-        weights=torchvision.models.video.Swin3D_T_Weights.DEFAULT
-    ),
-    "video.swin3d_s": torchvision.models.video.swin3d_s(
-        weights=torchvision.models.video.Swin3D_S_Weights.DEFAULT
-    ),
-    "video.swin3d_b": torchvision.models.video.swin3d_b(
-        weights=torchvision.models.video.Swin3D_B_Weights.DEFAULT
+    ModelWrapper(
+        "video.swin3d_b",
+        torchvision.models.video.swin3d_b,
+        torchvision.models.video.Swin3D_B_Weights.DEFAULT,
+        sizes=VIDEO_TENSORS,
     ),
 }
 
 
 def main():
-    extract_and_print_all()
+    parser = argparse.ArgumentParser(description="StableHLO Extracter")
+    _ = parser.add_argument(
+        "-r",
+        "--random",
+        action="store_true",
+        help="Use one random tensor size for each model",
+    )
+    _ = parser.add_argument(
+        "-p", "--print", action="store_true", help="Print the StableHLO"
+    )
+    _ = parser.add_argument(
+        "-b",
+        "--bytecode",
+        action="store_true",
+        help="Extract StableHLO bytecode instead of text",
+    )
+    _ = parser.add_argument(
+        "-o",
+        "--output-dir",
+        type=str,
+        default="out",
+        help='Directory to save StableHLO outputs (one file per model). Files are saved as "[model name].[bin/txt]"',
+    )
+    _ = parser.add_argument(
+        "--override",
+        action="store_true",
+        help="Override existing files in the output directory",
+    )
+    _ = parser.add_argument(
+        "--no-output",
+        action="store_true",
+        help="Do not write any files to disk",
+    )
+    args = parser.parse_args()
+    extract_and_print_all(
+        random_tensor=args.random,  # pyright: ignore[reportAny]
+        print_hlo=args.print,  # pyright: ignore[reportAny]
+        bytecode=args.bytecode,  # pyright: ignore[reportAny]
+        output_dir=None if args.no_output else args.output_dir,  # pyright: ignore[reportAny]
+        override=args.override,  # pyright: ignore[reportAny]
+    )
 
 
-def extract_and_print_all():
-    for model_name in models.keys():
-        extract_and_print(model_name)
+def extract_and_print_all(
+    random_tensor: bool = False,
+    print_hlo: bool = False,
+    bytecode: bool = False,
+    output_dir: str | None = None,
+    override: bool = False,
+):
+    for model in models:
+        sizes = [random.choice(model.sizes)] if random_tensor else model.sizes
+        for tensor_size in sizes:
+            end = "\n" if print_hlo else ""
+            status = f" {end}{GREEN}[ok]"
+            print(
+                f"{CYAN}extracting {BOLD}{model.model_name}{RESET}{BOLD}{tensor_size}{RESET}...",
+                file=sys.stderr,
+                end=end,
+            )
+            try:
+                model.construct()
+                assert model.model is not None
+                model.model = model.model.eval()
+                sample_input = (torch.randn(tensor_size),)
+                exported = torch_export(model.model, sample_input)
+                stablehlo_program = exported_program_to_stablehlo(exported)
+                if output_dir:
+                    os.makedirs(output_dir, exist_ok=True)
+                    filename = f"{model.model_name}.{'bin' if bytecode else 'txt'}"
+                    path = os.path.join(output_dir, filename)
+                    if override or not os.path.exists(path):
+                        with open(path, "wb" if bytecode else "w") as f:
+                            _ = f.write(_get_content(stablehlo_program, bytecode))  # pyright: ignore[reportUnknownArgumentType]
+                    else:
+                        status = f" {end}{YELLOW}[skip]"
+                else:
+                    status = f" {end}{YELLOW}[skip]"
+                if print_hlo:
+                    print(_get_content(stablehlo_program, bytecode))  # pyright: ignore[reportUnknownArgumentType]
+            except Exception as e:
+                status = f" {end}{RED}[failed]{RESET}\n{YELLOW}{e}{RESET}"
+                raise e
+            finally:
+                print(status, file=sys.stderr)
+                model.destruct()
 
 
-def extract_and_print(model_name: str):
-    print(f"extracting {model_name}...", file=sys.stderr, end="")
-    model = models[model_name]
-    sample_input = (torch.randn(4, 3, 224, 224),)
-    exported = torch_export(model, sample_input)
-    stablehlo_program = exported_program_to_stablehlo(exported)
-    print(stablehlo_program.get_stablehlo_text("forward"))
-    print(f"[ok]", file=sys.stderr)
+def _get_content(prog: StableHLOGraphModule, bytecode: bool):
+    return (
+        prog.get_stablehlo_bytecode("forward")
+        if bytecode
+        else prog.get_stablehlo_text("forward")
+    )
 
 
 if __name__ == "__main__":
