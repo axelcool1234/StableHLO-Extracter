@@ -4,10 +4,12 @@ import random
 import sys
 from typing import Callable
 
+
 import torch
 import torchvision
 from torch.export import export as torch_export
 from torch_xla.stablehlo import StableHLOGraphModule, exported_program_to_stablehlo
+from typing_extensions import override
 
 IMAGE_TENSORS: list[tuple[int, int, int, int]] = [
     (2**batch_exponent, 3, 224, 224) for batch_exponent in range(7)
@@ -53,6 +55,18 @@ class ModelWrapper:
             self.model = None
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+
+    @override
+    def __eq__(self, other: object):
+        if isinstance(other, ModelWrapper):
+            return self.model_name == other.model_name
+        if isinstance(other, str):
+            return self.model_name == other
+        return NotImplemented
+
+    @override
+    def __hash__(self):
+        return hash(self.model_name)
 
 
 models = {
@@ -839,84 +853,120 @@ def main():
         action="store_true",
         help="Do not write any files to disk",
     )
-    args = parser.parse_args()
-    extract_and_print_all(
-        random_tensor=args.random,  # pyright: ignore[reportAny]
-        print_hlo=args.print,  # pyright: ignore[reportAny]
-        bytecode=args.bytecode,  # pyright: ignore[reportAny]
-        output_dir=None if args.no_output else args.output_dir,  # pyright: ignore[reportAny]
-        override=args.override,  # pyright: ignore[reportAny]
+    _ = parser.add_argument(
+        "--model",
+        type=str,
+        help="Extract a specific model.",
     )
+    args = parser.parse_args()
+    if args.model:  # pyright: ignore[reportAny]
+        extract_and_print_one(
+            args.model,  # pyright: ignore[reportAny]
+            random_tensor=args.random,  # pyright: ignore[reportAny]
+            print_hlo=args.print,  # pyright: ignore[reportAny]
+            bytecode=args.bytecode,  # pyright: ignore[reportAny]
+            output_dir=None if args.no_output else args.output_dir,  # pyright: ignore[reportAny]
+            override=args.override,  # pyright: ignore[reportAny]
+        )
+    else:
+        extract_and_print_all(
+            random_tensor=args.random,  # pyright: ignore[reportAny]
+            print_hlo=args.print,  # pyright: ignore[reportAny]
+            bytecode=args.bytecode,  # pyright: ignore[reportAny]
+            output_dir=None if args.no_output else args.output_dir,  # pyright: ignore[reportAny]
+            override=args.override,  # pyright: ignore[reportAny]
+        )
 
 
-def extract_and_print_all(
-    random_tensor: bool = False,
+def extract_and_print_all(**kwargs):  # pyright: ignore[reportUnknownParameterType, reportMissingParameterType]
+    random_tensor: bool = kwargs.pop("random_tensor", False)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    for model in models:
+        sizes = [random.choice(model.sizes)] if random_tensor else model.sizes
+        for tensor_size in sizes:
+            extract_and_print(model, tensor_size, **kwargs)
+
+
+def extract_and_print_one(model_name: str, **kwargs):  # pyright: ignore[reportUnknownParameterType, reportMissingParameterType]
+    model = _get_model_by_name(model_name)
+    random_tensor: bool = kwargs.pop("random_tensor", False)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    sizes = [random.choice(model.sizes)] if random_tensor else model.sizes
+    for tensor_size in sizes:
+        extract_and_print(model, tensor_size, **kwargs)
+
+
+def extract_and_print(
+    model: ModelWrapper,
+    tensor_size: tuple[int, int, int, int] | tuple[int, int, int, int, int],
     print_hlo: bool = False,
     bytecode: bool = False,
     output_dir: str | None = None,
     override: bool = False,
 ):
     end = "\n" if print_hlo else ""
+    status = f" {end}{GREEN}[ok]"
+    try:
+        print(
+            f"{CYAN}extracting {BOLD}{model.model_name}{RESET}{BOLD}{tensor_size}{RESET}...",
+            file=sys.stderr,
+            end=end,
+        )
+        # Skip check
+        filename = f"{model.model_name}{tensor_size}.{'bin' if bytecode else 'txt'}"
+        path = None
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            path = os.path.join(output_dir, filename)
+            if os.path.exists(path) and not override and not print_hlo:
+                status = f" {end}{YELLOW}[skip]"
+                return
+        elif not print_hlo:
+            status = f" {end}{YELLOW}[skip]"
+            return
+
+        # Construction (expensive)
+        model.construct()
+        assert model.model is not None
+        model.model = model.model.eval()
+
+        # Generate random filled tensor
+        sample_input = (torch.randn(tensor_size),)
+
+        # Export
+        exported = torch_export(model.model, sample_input)
+        stablehlo_program = exported_program_to_stablehlo(exported)
+
+        # Output to file
+        if output_dir:
+            assert path is not None
+            if override or not os.path.exists(path):
+                with open(path, "wb" if bytecode else "w") as f:
+                    _ = f.write(_get_content(stablehlo_program, bytecode))  # pyright: ignore[reportUnknownArgumentType]
+
+        # Print to stdout
+        if print_hlo:
+            print(_get_content(stablehlo_program, bytecode))  # pyright: ignore[reportUnknownArgumentType]
+    except Exception as e:
+        status = f" {end}{RED}[failed]{RESET}\n{YELLOW}{e}{RESET}"
+        raise e
+    finally:
+        print(status, file=sys.stderr)
+        model.destruct()
+
+
+def _get_model_by_name(model_name: str) -> ModelWrapper:
+    if model_name not in models:
+        raise Exception("Model does not exist!")
     for model in models:
-        sizes = [random.choice(model.sizes)] if random_tensor else model.sizes
-        for tensor_size in sizes:
-            status = f" {end}{GREEN}[ok]"
-            try:
-                print(
-                    f"{CYAN}extracting {BOLD}{model.model_name}{RESET}{BOLD}{tensor_size}{RESET}...",
-                    file=sys.stderr,
-                    end=end,
-                )
-                # Skip check
-                filename = (
-                    f"{model.model_name}{tensor_size}.{'bin' if bytecode else 'txt'}"
-                )
-                path = None
-                if output_dir:
-                    os.makedirs(output_dir, exist_ok=True)
-                    path = os.path.join(output_dir, filename)
-                    if os.path.exists(path) and not override and not print_hlo:
-                        status = f" {end}{YELLOW}[skip]"
-                        continue
-                elif not print_hlo:
-                    status = f" {end}{YELLOW}[skip]"
-                    continue
-
-                # Construction (expensive)
-                model.construct()
-                assert model.model is not None
-                model.model = model.model.eval()
-
-                # Generate random filled tensor
-                sample_input = (torch.randn(tensor_size),)
-
-                # Export
-                exported = torch_export(model.model, sample_input)
-                stablehlo_program = exported_program_to_stablehlo(exported)
-
-                # Output to file
-                if output_dir:
-                    assert path is not None
-                    if override or not os.path.exists(path):
-                        with open(path, "wb" if bytecode else "w") as f:
-                            _ = f.write(_get_content(stablehlo_program, bytecode))  # pyright: ignore[reportUnknownArgumentType]
-
-                # Print to stdout
-                if print_hlo:
-                    print(_get_content(stablehlo_program, bytecode))  # pyright: ignore[reportUnknownArgumentType]
-            except Exception as e:
-                status = f" {end}{RED}[failed]{RESET}\n{YELLOW}{e}{RESET}"
-                raise e
-            finally:
-                print(status, file=sys.stderr)
-                model.destruct()
+        if model.model_name == model_name:
+            return model
+    raise Exception("Model does not exist!")
 
 
-def _get_content(prog: StableHLOGraphModule, bytecode: bool):
-    return (
-        prog.get_stablehlo_bytecode("forward")
+def _get_content(prog: StableHLOGraphModule, bytecode: bool):  # pyright: ignore[reportUnknownParameterType]
+    return (  # pyright: ignore[reportUnknownVariableType]
+        prog.get_stablehlo_bytecode("forward")  # pyright: ignore[reportUnknownMemberType]
         if bytecode
-        else prog.get_stablehlo_text("forward")
+        else prog.get_stablehlo_text("forward")  # pyright: ignore[reportUnknownMemberType]
     )
 
 
