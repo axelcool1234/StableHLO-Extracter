@@ -856,34 +856,52 @@ def extract_and_print_all(
     output_dir: str | None = None,
     override: bool = False,
 ):
+    end = "\n" if print_hlo else ""
     for model in models:
         sizes = [random.choice(model.sizes)] if random_tensor else model.sizes
         for tensor_size in sizes:
-            end = "\n" if print_hlo else ""
             status = f" {end}{GREEN}[ok]"
-            print(
-                f"{CYAN}extracting {BOLD}{model.model_name}{RESET}{BOLD}{tensor_size}{RESET}...",
-                file=sys.stderr,
-                end=end,
-            )
             try:
+                print(
+                    f"{CYAN}extracting {BOLD}{model.model_name}{RESET}{BOLD}{tensor_size}{RESET}...",
+                    file=sys.stderr,
+                    end=end,
+                )
+                # Skip check
+                filename = (
+                    f"{model.model_name}{tensor_size}.{'bin' if bytecode else 'txt'}"
+                )
+                path = None
+                if output_dir:
+                    os.makedirs(output_dir, exist_ok=True)
+                    path = os.path.join(output_dir, filename)
+                    if os.path.exists(path) and not override and not print_hlo:
+                        status = f" {end}{YELLOW}[skip]"
+                        continue
+                elif not print_hlo:
+                    status = f" {end}{YELLOW}[skip]"
+                    continue
+
+                # Construction (expensive)
                 model.construct()
                 assert model.model is not None
                 model.model = model.model.eval()
+
+                # Generate random filled tensor
                 sample_input = (torch.randn(tensor_size),)
+
+                # Export
                 exported = torch_export(model.model, sample_input)
                 stablehlo_program = exported_program_to_stablehlo(exported)
+
+                # Output to file
                 if output_dir:
-                    os.makedirs(output_dir, exist_ok=True)
-                    filename = f"{model.model_name}.{'bin' if bytecode else 'txt'}"
-                    path = os.path.join(output_dir, filename)
+                    assert path is not None
                     if override or not os.path.exists(path):
                         with open(path, "wb" if bytecode else "w") as f:
                             _ = f.write(_get_content(stablehlo_program, bytecode))  # pyright: ignore[reportUnknownArgumentType]
-                    else:
-                        status = f" {end}{YELLOW}[skip]"
-                else:
-                    status = f" {end}{YELLOW}[skip]"
+
+                # Print to stdout
                 if print_hlo:
                     print(_get_content(stablehlo_program, bytecode))  # pyright: ignore[reportUnknownArgumentType]
             except Exception as e:
