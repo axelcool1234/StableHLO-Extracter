@@ -19,6 +19,7 @@ VIDEO_TENSORS: list[tuple[int, int, int, int, int]] = [
     for batch_exponent in range(7)
     for frame_exponent in range(6)
 ]
+MVIT_TENSORS = [(16, 3, 16, 224, 224)]
 RED = "\033[91m"
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
@@ -767,13 +768,13 @@ models = {
         "video.mvit_v1_b",
         torchvision.models.video.mvit_v1_b,
         torchvision.models.video.MViT_V1_B_Weights.DEFAULT,
-        sizes=VIDEO_TENSORS,
+        sizes=MVIT_TENSORS,
     ),
     ModelWrapper(
         "video.mvit_v2_s",
         torchvision.models.video.mvit_v2_s,
         torchvision.models.video.MViT_V2_S_Weights.DEFAULT,
-        sizes=VIDEO_TENSORS,
+        sizes=MVIT_TENSORS,
     ),
     ModelWrapper(
         "video.r3d_18",
