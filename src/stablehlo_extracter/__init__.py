@@ -841,7 +841,7 @@ def main():
         "--output-dir",
         type=str,
         default="out",
-        help='Directory to save StableHLO outputs (one file per model). Files are saved as "[model name].[bin/txt]"',
+        help='Directory to save StableHLO outputs (one file per model). Files are saved as "[model name][tensor size].[bin/txt]"',
     )
     _ = parser.add_argument(
         "--override",
