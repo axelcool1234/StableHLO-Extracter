@@ -641,19 +641,20 @@ models = {
     #     torchvision.models.detection.SSDLite320_MobileNet_V3_Large_Weights.DEFAULT,
     #     sizes=IMAGE_TENSORS,
     # ),
-    ModelWrapper(
-        "optical_flow.raft_large",
-        torchvision.models.optical_flow.raft_large,
-        torchvision.models.optical_flow.Raft_Large_Weights.DEFAULT,
-        sizes=IMAGE_TENSORS,
-    ),
-    ModelWrapper(
-        "optical_flow.raft_small",
-        torchvision.models.optical_flow.raft_small,
-        torchvision.models.optical_flow.Raft_Small_Weights.DEFAULT,
-        sizes=IMAGE_TENSORS,
-    ),
-    # NOTE: Quantization isn't supported by torch-xla export
+    # NOTE: RAFT models mutate during forward. Skipping...
+    # ModelWrapper(
+    #     "optical_flow.raft_large",
+    #     torchvision.models.optical_flow.raft_large,
+    #     torchvision.models.optical_flow.Raft_Large_Weights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # ModelWrapper(
+    #     "optical_flow.raft_small",
+    #     torchvision.models.optical_flow.raft_small,
+    #     torchvision.models.optical_flow.Raft_Small_Weights.DEFAULT,
+    #     sizes=IMAGE_TENSORS,
+    # ),
+    # NOTE: Quantization isn't supported by torch-xla export. Skipping...
     # ModelWrapper(
     #     "quantization.googlenet",
     #     torchvision.models.quantization.googlenet,
@@ -929,7 +930,10 @@ def extract_and_print(
         model.model = model.model.eval()
 
         # Generate random filled tensor
-        sample_input = (torch.randn(tensor_size),)
+        if "optical_flow" in model.model_name:
+            sample_input = (torch.randn(tensor_size), torch.randn(tensor_size))
+        else:
+            sample_input = (torch.randn(tensor_size),)
 
         # Export
         exported = torch_export(model.model, sample_input)
