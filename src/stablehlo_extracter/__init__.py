@@ -1,14 +1,28 @@
 import argparse
+import gc
 import os
 import random
 import sys
 from typing import Callable
 
-
+import jax.numpy as jnp
 import torch
+import torchax as tx
 import torchvision
+from jax import ShapeDtypeStruct
+from jax import jit
+from jax.export import export as jax_export
+from torchax.export import (
+    exported_program_to_stablehlo as jax_exported_program_to_stablehlo,
+)
 from torch.export import export as torch_export
-from torch_xla.stablehlo import StableHLOGraphModule, exported_program_to_stablehlo
+from torch.nn.modules import Module
+from torch_xla.stablehlo import (
+    exported_program_to_stablehlo as torch_exported_program_to_stablehlo,
+)
+from torch_xla.stablehlo import (
+    StableHLOGraphModule,
+)
 from typing_extensions import override
 
 IMAGE_TENSORS: list[tuple[int, int, int, int]] = [
@@ -34,7 +48,7 @@ class ModelWrapper:
     def __init__(
         self,
         model_name: str,
-        constructor: Callable[..., torch.nn.Module],
+        constructor: Callable[..., Module],
         default_weight: torchvision.models.WeightsEnum,
         sizes: list[tuple[int, int, int, int]] | list[tuple[int, int, int, int, int]],
     ):
@@ -58,6 +72,7 @@ class ModelWrapper:
             self.model = None
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            gc.collect()  # pyright: ignore[reportUnusedCallResult]
 
     @override
     def __eq__(self, other: object):
@@ -862,6 +877,11 @@ def main():
         type=str,
         help="Extract a specific model.",
     )
+    _ = parser.add_argument(
+        "--torch",
+        action="store_true",
+        help="Extracts using Torch's extract function instead of Jax's extract function.",
+    )
     args = parser.parse_args()
     if args.model:  # pyright: ignore[reportAny]
         extract_and_print_one(
@@ -871,6 +891,7 @@ def main():
             bytecode=args.bytecode,  # pyright: ignore[reportAny]
             output_dir=None if args.no_output else args.output_dir,  # pyright: ignore[reportAny]
             override=args.override,  # pyright: ignore[reportAny]
+            extract_with_torch=args.torch,  # pyright: ignore[reportAny]
         )
     else:
         extract_and_print_all(
@@ -879,6 +900,7 @@ def main():
             bytecode=args.bytecode,  # pyright: ignore[reportAny]
             output_dir=None if args.no_output else args.output_dir,  # pyright: ignore[reportAny]
             override=args.override,  # pyright: ignore[reportAny]
+            extract_with_torch=args.torch,  # pyright: ignore[reportAny]
         )
 
 
@@ -905,6 +927,7 @@ def extract_and_print(
     bytecode: bool = False,
     output_dir: str | None = None,
     override: bool = False,
+    extract_with_torch: bool = False,
 ):
     end = "\n" if print_hlo else ""
     status = f" {end}{GREEN}[ok]"
@@ -933,31 +956,47 @@ def extract_and_print(
         model.model = model.model.eval()
 
         # Generate random filled tensor
-        if "optical_flow" in model.model_name:
-            sample_input = (torch.randn(tensor_size), torch.randn(tensor_size))
-        else:
-            sample_input = (torch.randn(tensor_size),)
-
         # Export
-        exported = torch_export(model.model, sample_input)
-        stablehlo_program = exported_program_to_stablehlo(exported)
+        if extract_with_torch:
+            stablehlo_program = export_from_torch(model.model, tensor_size)
+        else:
+            stablehlo_program = export_from_jax(model.model, tensor_size)
 
         # Output to file
         if output_dir:
             assert path is not None
             if override or not os.path.exists(path):
                 with open(path, "wb" if bytecode else "w") as f:
-                    _ = f.write(_get_content(stablehlo_program, bytecode))  # pyright: ignore[reportUnknownArgumentType]
+                    _ = f.write(_get_content(stablehlo_program, bytecode))
 
         # Print to stdout
         if print_hlo:
-            print(_get_content(stablehlo_program, bytecode))  # pyright: ignore[reportUnknownArgumentType]
+            print(_get_content(stablehlo_program, bytecode))
     except Exception as e:
         status = f" {end}{RED}[failed]{RESET}\n{YELLOW}{e}{RESET}"
         print(e, file=sys.stderr)
     finally:
         print(status, file=sys.stderr)
         model.destruct()
+
+
+def export_from_torch(
+    model: Module,
+    tensor_size: tuple[int, int, int, int] | tuple[int, int, int, int, int],
+) -> StableHLOGraphModule:
+    sample_input = (torch.randn(tensor_size),)
+    exported = torch_export(model, sample_input)
+    return torch_exported_program_to_stablehlo(exported)
+
+
+def export_from_jax(
+    model: Module,
+    tensor_size: tuple[int, int, int, int] | tuple[int, int, int, int, int],
+):
+    # Get weights + JAX function
+    weights, jfunc = tx.extract_jax(model)
+    sample_input = (ShapeDtypeStruct(tensor_size, jnp.float32),)
+    return jax_export(jit(jfunc))(weights, sample_input)
 
 
 def _get_model_by_name(model_name: str) -> ModelWrapper:
@@ -969,12 +1008,18 @@ def _get_model_by_name(model_name: str) -> ModelWrapper:
     raise Exception("Model does not exist!")
 
 
-def _get_content(prog: StableHLOGraphModule, bytecode: bool):  # pyright: ignore[reportUnknownParameterType]
-    return (  # pyright: ignore[reportUnknownVariableType]
-        prog.get_stablehlo_bytecode("forward")  # pyright: ignore[reportUnknownMemberType]
-        if bytecode
-        else prog.get_stablehlo_text("forward")  # pyright: ignore[reportUnknownMemberType]
-    )
+def _get_content(prog, bytecode: bool):
+    if isinstance(prog, StableHLOGraphModule):
+        return (
+            prog.get_stablehlo_bytecode("forward")
+            if bytecode
+            else prog.get_stablehlo_text("forward")
+        )
+    # JAX Exported object
+    elif hasattr(prog, "mlir_module"):
+        return str(prog.mlir_module())
+    else:
+        raise TypeError(f"Unsupported export type: {type(prog)}")
 
 
 if __name__ == "__main__":

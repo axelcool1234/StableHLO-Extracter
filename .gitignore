@@ -1,1 +1,5 @@
 out/
+torch-out/
+jax-out/
+*.log
+model_optimized.txt

@@ -8,6 +8,7 @@ dependencies = [
     "jax>=0.7.1",
     "torch==2.5.0",
     "torch-xla==2.5.0",
+    "torchax>=0.0.7",
     "torchvision==0.20.0",
 ]
 

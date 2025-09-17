@@ -686,6 +686,7 @@ dependencies = [
     { name = "jax" },
     { name = "torch" },
     { name = "torch-xla" },
+    { name = "torchax" },
     { name = "torchvision" },
 ]
 
@@ -694,6 +695,7 @@ requires-dist = [
     { name = "jax", specifier = ">=0.7.1" },
     { name = "torch", specifier = "==2.5.0" },
     { name = "torch-xla", specifier = "==2.5.0" },
+    { name = "torchax", specifier = ">=0.0.7" },
     { name = "torchvision", specifier = "==0.20.0" },
 ]
 
@@ -759,6 +761,15 @@ dependencies = [
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0e/76/f7d9eaeb9f7249e0864faccb77aebda316634029733fd7ae28de3e63fb61/torch_xla-2.5.0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:e89cc10ed519b5d2d77d901f0022f6abdd420144b8cb164ae45ec008724e3e7c", size = 90615312, upload-time = "2024-10-18T15:46:03.676Z" },
+]
+
+[[package]]
+name = "torchax"
+version = "0.0.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/de/f9/b97c792e5ec68d4ccff8b4f78b982774f6ff22309984c865cc70c96edcfd/torchax-0.0.7.tar.gz", hash = "sha256:1f43c0a83bafcbef5dffd4ff54c1149b0115c81db3ef6c4cb71789c3015b5c81", size = 304657, upload-time = "2025-09-04T03:13:44.262Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/48/12/5134bf1c05e6e3a24e7d311651bc5bfdb4b97f358bb0214a739f6043c3b1/torchax-0.0.7-py3-none-any.whl", hash = "sha256:b4d615e02a5773c63ea4d76ac61e6edf6bd369b379abcfb183c15e575dade643", size = 101686, upload-time = "2025-09-04T03:13:42.907Z" },
 ]
 
 [[package]]
